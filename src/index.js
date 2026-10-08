@@ -16,11 +16,26 @@ discord.once("ready", () => {
   console.log(`Discord bot logged in as ${discord.user.tag}`);
 });
 
-discord.on("messageCreate", (message) => {
+discord.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
+  // Test command
   if (message.content.toLowerCase() === "test") {
-    message.reply("Bunny law bot is working! 🐰");
+    await message.reply("Bunny law bot is working! 🐰");
+    return;
+  }
+
+  // List server roles
+  if (message.content.toLowerCase() === "!roles") {
+    const roles = message.guild.roles.cache
+      .filter((role) => role.name !== "@everyone")
+      .map((role) => role.name);
+
+    await message.reply(
+      roles.length
+        ? `**Server roles:**\n${roles.join("\n")}`
+        : "There are no other roles."
+    );
   }
 });
 
