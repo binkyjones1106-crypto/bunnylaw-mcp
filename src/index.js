@@ -16,6 +16,14 @@ discord.once("ready", () => {
   console.log(`Discord bot logged in as ${discord.user.tag}`);
 });
 
+discord.on("messageCreate", (message) => {
+  if (message.author.bot) return;
+
+  if (message.content.toLowerCase() === "test") {
+    message.reply("Bunny law bot is working! 🐰");
+  }
+});
+
 discord.login(process.env.DISCORD_BOT_TOKEN);
 
 app.get("/", (req, res) => {
