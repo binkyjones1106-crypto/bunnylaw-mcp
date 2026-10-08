@@ -48,7 +48,7 @@ function getGuild() {
   const guild = discord.guilds.cache.first();
 
   if (!guild) {
-    throw new Error("Bunnylaw bot is not in a Discord server.");
+    throw new Error("Bunnylaw Bot is not in a Discord server.");
   }
 
   return guild;
@@ -101,7 +101,7 @@ function getManageableRole(guild, role) {
   }
 
   if (role.managed) {
-    throw new Error("That role is managed by a Discord integration.");
+    throw new Error("That role is managed by Discord.");
   }
 
   if (role.position >= me.roles.highest.position) {
@@ -114,43 +114,70 @@ function getManageableRole(guild, role) {
 }
 
 // ============================================================
-// SAFE ROLE PERMISSIONS
+// SAFE PERMISSIONS
 // ============================================================
 //
-// Administrator is intentionally NOT included.
-// Ban/Kick/Moderate members are also blocked.
+// These are the ONLY permissions Bunnylaw can give to roles.
 //
-// This prevents the bot from creating a role and then using
-// that role to gain full server control.
+// Administrator
+// Manage Roles
+// Ban Members
+// Kick Members
+// Moderate Members
+// Manage Server
+// Manage Webhooks
+// Manage Channels
+// etc.
 //
+// are intentionally blocked from being granted.
+//
+
+const SAFE_PERMISSIONS = {
+  viewchannel: "ViewChannel",
+  sendmessages: "SendMessages",
+  sendmessagesinthreads: "SendMessagesInThreads",
+  readmessagehistory: "ReadMessageHistory",
+  addreactions: "AddReactions",
+  embedlinks: "EmbedLinks",
+  attachfiles: "AttachFiles",
+  mentioneveryone: "MentionEveryone",
+
+  createpublicthreads: "CreatePublicThreads",
+  createprivatethreads: "CreatePrivateThreads",
+
+  connect: "Connect",
+  speak: "Speak",
+  stream: "Stream",
+
+  movemembers: "MoveMembers",
+  managemessages: "ManageMessages",
+  managethreads: "ManageThreads",
+  manageevents: "ManageEvents",
+};
 
 function getSafePermissionFlag(permissionName) {
   const normalized = permissionName
     .replace(/[\s_-]/g, "")
     .toLowerCase();
 
-  const permissions = {
-    viewchannel: PermissionFlagsBits.ViewChannel,
-    sendmessages: PermissionFlagsBits.SendMessages,
-    sendmessagesindthreads:
-      PermissionFlagsBits.SendMessagesInThreads,
-    readmessagehistory:
-      PermissionFlagsBits.ReadMessageHistory,
-    addreactions: PermissionFlagsBits.AddReactions,
-    embedlinks: PermissionFlagsBits.EmbedLinks,
-    attachfiles: PermissionFlagsBits.AttachFiles,
-    mentioneveryone: PermissionFlagsBits.MentionEveryone,
+  const key = SAFE_PERMISSIONS[normalized];
 
-    connect: PermissionFlagsBits.Connect,
-    speak: PermissionFlagsBits.Speak,
-    stream: PermissionFlagsBits.Stream,
-    movemembers: PermissionFlagsBits.MoveMembers,
+  if (!key) {
+    return undefined;
+  }
 
-    managechannels: PermissionFlagsBits.ManageChannels,
-    managewebhooks: PermissionFlagsBits.ManageWebhooks,
+  return PermissionFlagsBits[key];
+}
+
+function textResult(text) {
+  return {
+    content: [
+      {
+        type: "text",
+        text,
+      },
+    ],
   };
-
-  return permissions[normalized];
 }
 
 // ============================================================
@@ -210,7 +237,7 @@ discord.on("messageCreate", async (message) => {
       });
 
       await message.reply(
-        `✅ Created **${role.name}** with no dangerous permissions.`
+        `✅ Created **${role.name}** with no permissions.`
       );
     } catch (error) {
       console.error(error);
@@ -221,7 +248,7 @@ discord.on("messageCreate", async (message) => {
   }
 
   // ==========================================================
-  // SET ROLE PERMISSION
+  // SET ROLE PERMISSIONS
   // ==========================================================
 
   if (command.startsWith("!setrolepermission ")) {
@@ -249,7 +276,7 @@ discord.on("messageCreate", async (message) => {
 
     if (!permission) {
       await message.reply(
-        "❌ That permission is not allowed by Bunnylaw Bot."
+        "❌ That permission is blocked or unsupported."
       );
       return;
     }
@@ -258,7 +285,6 @@ discord.on("messageCreate", async (message) => {
       requireOwnerOrAdmin(message);
       getManageableRole(message.guild, role);
 
-      // ADD the permission without removing existing permissions.
       const current = role.permissions.bitfield;
       const updated = current | permission;
 
@@ -412,12 +438,14 @@ discord.on("messageCreate", async (message) => {
         `Deleted by ${message.author.tag}`
       );
 
-      await message.reply(
-        `✅ Deleted **${channelName}**.`
-      );
+      // Channel no longer exists, so don't try to reply there.
+
     } catch (error) {
       console.error(error);
-      await message.reply(`❌ ${error.message}`);
+
+      try {
+        await message.reply(`❌ ${error.message}`);
+      } catch {}
     }
 
     return;
@@ -464,7 +492,9 @@ discord.on("messageCreate", async (message) => {
     try {
       requireOwnerOrAdmin(message);
 
-      await channel.setParent(category.id, true);
+      await channel.setParent(category.id, {
+        lockPermissions: false,
+      });
 
       await message.reply(
         `✅ Moved **${channel.name}** into **${category.name}**.`
@@ -473,6 +503,23 @@ discord.on("messageCreate", async (message) => {
       console.error(error);
       await message.reply(`❌ ${error.message}`);
     }
+
+    return;
+  }
+
+  // ==========================================================
+  // BLOCKED MEMBER COMMANDS
+  // ==========================================================
+
+  if (
+    command.startsWith("!addrole ") ||
+    command.startsWith("!removerole ") ||
+    command.startsWith("!grantadmin ") ||
+    command.startsWith("!removeadmin ")
+  ) {
+    await message.reply(
+      "❌ That command is disabled for Bunnylaw Bot."
+    );
 
     return;
   }
@@ -497,23 +544,6 @@ discord.on("messageCreate", async (message) => {
 
     return;
   }
-
-  // ==========================================================
-  // BLOCKED COMMANDS
-  // ==========================================================
-
-  if (
-    command.startsWith("!addrole ") ||
-    command.startsWith("!removerole ") ||
-    command.startsWith("!grantadmin ") ||
-    command.startsWith("!removeadmin ")
-  ) {
-    await message.reply(
-      "❌ That command has been disabled for Bunnylaw Bot."
-    );
-
-    return;
-  }
 });
 
 // ============================================================
@@ -526,9 +556,9 @@ function buildMcpServer() {
     version: "1.0.0",
   });
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // LIST ROLES
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "list_roles",
@@ -547,27 +577,23 @@ function buildMcpServer() {
             `${role.name} — position ${role.position}`
         );
 
-      return {
-        content: [
-          {
-            type: "text",
-            text: roles.length
-              ? `Server roles:\n${roles.join("\n")}`
-              : "There are no other roles.",
-          },
-        ],
-      };
+      return textResult(
+        roles.length
+          ? `Server roles:\n${roles.join("\n")}`
+          : "There are no other roles."
+      );
     }
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // CREATE ROLE
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "create_role",
     {
-      description: "Create a Discord role with no permissions.",
+      description:
+        "Create a Discord role with no permissions.",
       inputSchema: z.object({
         name: z.string().min(1),
       }),
@@ -582,78 +608,300 @@ function buildMcpServer() {
           reason: "Created through Bunnylaw MCP",
         });
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Created role "${role.name}".`,
-            },
-          ],
-        };
+        return textResult(
+          `✅ Created role "${role.name}".`
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ ${error.message}`,
-            },
-          ],
-        };
+        return textResult(`❌ ${error.message}`);
       }
     }
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
+  // RENAME ROLE
+  // ==========================================================
+
+  server.registerTool(
+    "rename_role",
+    {
+      description: "Rename an existing Discord role.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        new_name: z.string().min(1),
+      }),
+    },
+    async ({ role, new_name }) => {
+      const guild = getGuild();
+      const r = findRole(guild, role);
+
+      if (!r) {
+        return textResult(
+          `❌ I couldn't find "${role}".`
+        );
+      }
+
+      try {
+        getManageableRole(guild, r);
+
+        await r.setName(
+          new_name,
+          "Renamed through Bunnylaw MCP"
+        );
+
+        return textResult(
+          `✅ Renamed "${role}" to "${new_name}".`
+        );
+      } catch (error) {
+        return textResult(`❌ ${error.message}`);
+      }
+    }
+  );
+
+  // ==========================================================
+  // SET ROLE PERMISSIONS
+  // ==========================================================
+
+  server.registerTool(
+    "set_role_permissions",
+    {
+      description:
+        "Add safe permissions to an existing Discord role. Dangerous permissions are blocked.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        permissions: z.array(
+          z.string().min(1)
+        ).min(1),
+      }),
+    },
+    async ({ role, permissions }) => {
+      const guild = getGuild();
+      const r = findRole(guild, role);
+
+      if (!r) {
+        return textResult(
+          `❌ I couldn't find "${role}".`
+        );
+      }
+
+      try {
+        getManageableRole(guild, r);
+
+        let bitfield = r.permissions.bitfield;
+
+        const added = [];
+        const blocked = [];
+
+        for (const name of permissions) {
+          const flag = getSafePermissionFlag(name);
+
+          if (flag) {
+            bitfield |= flag;
+            added.push(name);
+          } else {
+            blocked.push(name);
+          }
+        }
+
+        if (added.length) {
+          await r.setPermissions(
+            bitfield,
+            "Permissions changed through Bunnylaw MCP"
+          );
+        }
+
+        let result =
+          `✅ "${role}": added [${
+            added.join(", ") || "none"
+          }]`;
+
+        if (blocked.length) {
+          result +=
+            `\n⚠️ Blocked: ${blocked.join(", ")}`;
+        }
+
+        return textResult(result);
+      } catch (error) {
+        return textResult(`❌ ${error.message}`);
+      }
+    }
+  );
+
+  // ==========================================================
+  // SET ROLE COLOR
+  // ==========================================================
+
+  server.registerTool(
+    "set_role_color",
+    {
+      description:
+        "Change a Discord role's color.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        color: z.string().regex(
+          /^#?[0-9a-fA-F]{6}$/
+        ),
+      }),
+    },
+    async ({ role, color }) => {
+      const guild = getGuild();
+      const r = findRole(guild, role);
+
+      if (!r) {
+        return textResult(
+          `❌ I couldn't find "${role}".`
+        );
+      }
+
+      try {
+        getManageableRole(guild, r);
+
+        const hex = color.startsWith("#")
+          ? color
+          : `#${color}`;
+
+        await r.setColor(
+          hex,
+          "Color changed through Bunnylaw MCP"
+        );
+
+        return textResult(
+          `✅ Changed "${role}" to ${hex}.`
+        );
+      } catch (error) {
+        return textResult(`❌ ${error.message}`);
+      }
+    }
+  );
+
+  // ==========================================================
+  // MOVE ROLE
+  // ==========================================================
+
+  server.registerTool(
+    "move_role",
+    {
+      description:
+        "Move a manageable role in the role hierarchy.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        position: z.number().int().min(1),
+      }),
+    },
+    async ({ role, position }) => {
+      const guild = getGuild();
+      const r = findRole(guild, role);
+
+      if (!r) {
+        return textResult(
+          `❌ I couldn't find "${role}".`
+        );
+      }
+
+      try {
+        getManageableRole(guild, r);
+
+        const me = guild.members.me;
+        const max =
+          me.roles.highest.position - 1;
+
+        if (position > max) {
+          return textResult(
+            `❌ The highest position I can use is ${max}.`
+          );
+        }
+
+        await r.setPosition(position, {
+          reason: "Moved through Bunnylaw MCP",
+        });
+
+        return textResult(
+          `✅ Moved "${role}" to position ${position}.`
+        );
+      } catch (error) {
+        return textResult(`❌ ${error.message}`);
+      }
+    }
+  );
+
+  // ==========================================================
   // CREATE CHANNEL
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "create_channel",
     {
-      description: "Create a Discord text channel.",
+      description:
+        "Create a text or voice channel, optionally inside a category.",
       inputSchema: z.object({
         name: z.string().min(1),
+        type: z
+          .enum(["text", "voice"])
+          .optional(),
+        category: z.string().optional(),
       }),
     },
-    async ({ name }) => {
+    async ({ name, type, category }) => {
       const guild = getGuild();
 
       try {
-        const channel = await guild.channels.create({
-          name,
-          type: ChannelType.GuildText,
-          reason: "Created through Bunnylaw MCP",
-        });
+        let parent;
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Created channel "${channel.name}".`,
-            },
-          ],
-        };
+        if (category) {
+          parent = findChannel(
+            guild,
+            category
+          );
+
+          if (
+            !parent ||
+            parent.type !== ChannelType.GuildCategory
+          ) {
+            return textResult(
+              `❌ I couldn't find category "${category}".`
+            );
+          }
+        }
+
+        const channel =
+          await guild.channels.create({
+            name,
+            type:
+              type === "voice"
+                ? ChannelType.GuildVoice
+                : ChannelType.GuildText,
+            parent: parent?.id,
+            reason:
+              "Created through Bunnylaw MCP",
+          });
+
+        return textResult(
+          `✅ Created ${
+            type === "voice"
+              ? "voice"
+              : "text"
+          } channel "${channel.name}"${
+            parent
+              ? ` in "${parent.name}".`
+              : "."
+          }`
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ ${error.message}`,
-            },
-          ],
-        };
+        return textResult(
+          `❌ ${error.message}`
+        );
       }
     }
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // CREATE CATEGORY
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "create_category",
     {
-      description: "Create a Discord category.",
+      description:
+        "Create a Discord category.",
       inputSchema: z.object({
         name: z.string().min(1),
       }),
@@ -662,41 +910,92 @@ function buildMcpServer() {
       const guild = getGuild();
 
       try {
-        const category = await guild.channels.create({
-          name,
-          type: ChannelType.GuildCategory,
-          reason: "Created through Bunnylaw MCP",
-        });
+        const category =
+          await guild.channels.create({
+            name,
+            type: ChannelType.GuildCategory,
+            reason:
+              "Created through Bunnylaw MCP",
+          });
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Created category "${category.name}".`,
-            },
-          ],
-        };
+        return textResult(
+          `✅ Created category "${category.name}".`
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ ${error.message}`,
-            },
-          ],
-        };
+        return textResult(
+          `❌ ${error.message}`
+        );
       }
     }
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
+  // MOVE CHANNEL
+  // ==========================================================
+
+  server.registerTool(
+    "move_channel",
+    {
+      description:
+        "Move a channel into a category.",
+      inputSchema: z.object({
+        channel: z.string().min(1),
+        category: z.string().min(1),
+      }),
+    },
+    async ({ channel, category }) => {
+      const guild = getGuild();
+
+      const ch = findChannel(
+        guild,
+        channel
+      );
+
+      const cat = findChannel(
+        guild,
+        category
+      );
+
+      if (!ch) {
+        return textResult(
+          `❌ I couldn't find "${channel}".`
+        );
+      }
+
+      if (
+        !cat ||
+        cat.type !== ChannelType.GuildCategory
+      ) {
+        return textResult(
+          `❌ I couldn't find category "${category}".`
+        );
+      }
+
+      try {
+        await ch.setParent(cat.id, {
+          lockPermissions: false,
+        });
+
+        return textResult(
+          `✅ Moved "${ch.name}" into "${cat.name}".`
+        );
+      } catch (error) {
+        return textResult(
+          `❌ ${error.message}`
+        );
+      }
+    }
+  );
+
+  // ==========================================================
   // RENAME CHANNEL
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "rename_channel",
     {
-      description: "Rename a Discord channel.",
+      description:
+        "Rename a Discord channel.",
       inputSchema: z.object({
         channel: z.string().min(1),
         new_name: z.string().min(1),
@@ -704,182 +1003,196 @@ function buildMcpServer() {
     },
     async ({ channel, new_name }) => {
       const guild = getGuild();
-      const discordChannel = findChannel(guild, channel);
 
-      if (!discordChannel) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ I couldn't find "${channel}".`,
-            },
-          ],
-        };
+      const ch = findChannel(
+        guild,
+        channel
+      );
+
+      if (!ch) {
+        return textResult(
+          `❌ I couldn't find "${channel}".`
+        );
       }
 
       try {
-        await discordChannel.setName(
+        await ch.setName(
           new_name,
           "Renamed through Bunnylaw MCP"
         );
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Renamed channel to "${new_name}".`,
-            },
-          ],
-        };
+        return textResult(
+          `✅ Renamed "${channel}" to "${new_name}".`
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ ${error.message}`,
-            },
-          ],
-        };
+        return textResult(
+          `❌ ${error.message}`
+        );
       }
     }
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // DELETE CHANNEL
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "delete_channel",
     {
-      description: "Delete a Discord channel.",
+      description:
+        "Delete a Discord channel.",
       inputSchema: z.object({
         channel: z.string().min(1),
       }),
     },
     async ({ channel }) => {
       const guild = getGuild();
-      const discordChannel = findChannel(guild, channel);
 
-      if (!discordChannel) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ I couldn't find "${channel}".`,
-            },
-          ],
-        };
+      const ch = findChannel(
+        guild,
+        channel
+      );
+
+      if (!ch) {
+        return textResult(
+          `❌ I couldn't find "${channel}".`
+        );
       }
 
       try {
-        await discordChannel.delete(
+        await ch.delete(
           "Deleted through Bunnylaw MCP"
         );
 
-        return {
-          content: [
-            {
-              type: "text",
-              text: `✅ Deleted "${channel}".`,
-            },
-          ],
-        };
+        return textResult(
+          `✅ Deleted "${channel}".`
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ ${error.message}`,
-            },
-          ],
-        };
+        return textResult(
+          `❌ ${error.message}`
+        );
       }
     }
   );
 
-  // ----------------------------------------------------------
-  // SET ROLE PERMISSION
-  // ----------------------------------------------------------
+  // ==========================================================
+  // CHANNEL PERMISSIONS
+  // ==========================================================
 
   server.registerTool(
-    "set_role_permission",
+    "set_channel_permissions",
     {
       description:
-        "Add an allowed permission to a Discord role. Administrator and dangerous member-management permissions are blocked.",
+        "Allow or deny safe permissions for a role on a channel or category.",
       inputSchema: z.object({
+        channel: z.string().min(1),
         role: z.string().min(1),
-        permission: z.string().min(1),
+        allow: z
+          .array(z.string())
+          .default([]),
+        deny: z
+          .array(z.string())
+          .default([]),
       }),
     },
-    async ({ role, permission }) => {
+    async ({
+      channel,
+      role,
+      allow,
+      deny,
+    }) => {
       const guild = getGuild();
-      const discordRole = findRole(guild, role);
 
-      if (!discordRole) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ I couldn't find "${role}".`,
-            },
-          ],
-        };
+      const ch = findChannel(
+        guild,
+        channel
+      );
+
+      if (!ch) {
+        return textResult(
+          `❌ I couldn't find "${channel}".`
+        );
       }
 
-      const permissionFlag =
-        getSafePermissionFlag(permission);
+      const target =
+        role.toLowerCase() === "everyone" ||
+        role === "@everyone"
+          ? guild.roles.everyone
+          : findRole(guild, role);
 
-      if (!permissionFlag) {
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                "❌ That permission is blocked or not supported.",
-            },
-          ],
-        };
+      if (!target) {
+        return textResult(
+          `❌ I couldn't find role "${role}".`
+        );
+      }
+
+      const overwrites = {};
+      const skipped = [];
+
+      for (const name of allow) {
+        const key =
+          SAFE_PERMISSIONS[
+            name
+              .replace(/[\s_-]/g, "")
+              .toLowerCase()
+          ];
+
+        if (key) {
+          overwrites[key] = true;
+        } else {
+          skipped.push(name);
+        }
+      }
+
+      for (const name of deny) {
+        const key =
+          SAFE_PERMISSIONS[
+            name
+              .replace(/[\s_-]/g, "")
+              .toLowerCase()
+          ];
+
+        if (key) {
+          overwrites[key] = false;
+        } else {
+          skipped.push(name);
+        }
+      }
+
+      if (!Object.keys(overwrites).length) {
+        return textResult(
+          "❌ No valid permissions were supplied."
+        );
       }
 
       try {
-        getManageableRole(guild, discordRole);
-
-        const current =
-          discordRole.permissions.bitfield;
-
-        const updated =
-          current | permissionFlag;
-
-        await discordRole.setPermissions(
-          updated,
-          "Permission changed through Bunnylaw MCP"
+        await ch.permissionOverwrites.edit(
+          target,
+          overwrites,
+          {
+            reason:
+              "Changed through Bunnylaw MCP",
+          }
         );
 
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `✅ Added "${permission}" to "${role}".`,
-            },
-          ],
-        };
+        return textResult(
+          `✅ Updated "${role}" on "${ch.name}".${
+            skipped.length
+              ? `\n⚠️ Skipped: ${skipped.join(", ")}`
+              : ""
+          }`
+        );
       } catch (error) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `❌ ${error.message}`,
-            },
-          ],
-        };
+        return textResult(
+          `❌ ${error.message}`
+        );
       }
     }
   );
 
-  // ----------------------------------------------------------
+  // ==========================================================
   // SERVER INFO
-  // ----------------------------------------------------------
+  // ==========================================================
 
   server.registerTool(
     "server_info",
@@ -891,18 +1204,12 @@ function buildMcpServer() {
     async () => {
       const guild = getGuild();
 
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              `Server: ${guild.name}\n` +
-              `Members: ${guild.memberCount}\n` +
-              `Roles: ${guild.roles.cache.size - 1}\n` +
-              `Channels: ${guild.channels.cache.size}`,
-          },
-        ],
-      };
+      return textResult(
+        `Server: ${guild.name}\n` +
+        `Members: ${guild.memberCount}\n` +
+        `Roles: ${guild.roles.cache.size - 1}\n` +
+        `Channels: ${guild.channels.cache.size}`
+      );
     }
   );
 
@@ -913,17 +1220,25 @@ function buildMcpServer() {
 // MCP HTTP SERVER
 // ============================================================
 
-const mcpHandler = createMcpHandler(buildMcpServer);
+const mcpHandler =
+  createMcpHandler(buildMcpServer);
 
 const app = createMcpExpressApp({
   host: "0.0.0.0",
-  allowedHosts: ["bunnylaw-mcp.onrender.com"],
+  allowedHosts: [
+    "bunnylaw-mcp.onrender.com",
+  ],
 });
 
-const nodeMcpHandler = toNodeHandler(mcpHandler);
+const nodeMcpHandler =
+  toNodeHandler(mcpHandler);
 
 app.all("/mcp", (req, res) => {
-  void nodeMcpHandler(req, res, req.body);
+  void nodeMcpHandler(
+    req,
+    res,
+    req.body
+  );
 });
 
 // ============================================================
@@ -931,7 +1246,9 @@ app.all("/mcp", (req, res) => {
 // ============================================================
 
 app.get("/", (req, res) => {
-  res.send("Bunnylaw MCP server is online!");
+  res.send(
+    "Bunnylaw MCP server is online!"
+  );
 });
 
 app.get("/health", (req, res) => {
@@ -942,12 +1259,19 @@ app.get("/health", (req, res) => {
 });
 
 // ============================================================
-// START SERVER
+// START
 // ============================================================
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(
-    "MCP endpoint: https://bunnylaw-mcp.onrender.com/mcp"
-  );
-});
+app.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `Server running on port ${PORT}`
+    );
+
+    console.log(
+      "MCP endpoint: https://bunnylaw-mcp.onrender.com/mcp"
+    );
+  }
+);
