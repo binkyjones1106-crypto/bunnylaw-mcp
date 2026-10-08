@@ -3,18 +3,21 @@ import {
   Client,
   GatewayIntentBits,
 } from "discord.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
 
-const app = express();
-const PORT = process.env.PORT || 10000;
+import {
+  createMcpHandler,
+  McpServer,
+} from "@modelcontextprotocol/server";
 
-app.use(express.json());
+import { createMcpExpressApp } from "@modelcontextprotocol/express";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import * as z from "zod/v4";
 
-// =========================
+const PORT = Number(process.env.PORT || 10000);
+
+// ============================================================
 // DISCORD BOT
-// =========================
+// ============================================================
 
 const discord = new Client({
   intents: [
@@ -31,7 +34,10 @@ discord.once("ready", () => {
 
 discord.login(process.env.DISCORD_BOT_TOKEN);
 
-// Get the Discord server
+// ============================================================
+// DISCORD HELPERS
+// ============================================================
+
 function getGuild() {
   if (!discord.isReady()) {
     throw new Error("Discord bot is not ready yet.");
@@ -46,27 +52,53 @@ function getGuild() {
   return guild;
 }
 
-// Find a member
 async function findMember(guild, username) {
   await guild.members.fetch();
 
+  const search = username.toLowerCase();
+
   return guild.members.cache.find(
     (member) =>
-      member.user.username.toLowerCase() === username.toLowerCase() ||
-      member.displayName.toLowerCase() === username.toLowerCase()
+      member.user.username.toLowerCase() === search ||
+      member.displayName.toLowerCase() === search
   );
 }
 
-// Find a role
 function findRole(guild, roleName) {
+  const search = roleName.toLowerCase();
+
   return guild.roles.cache.find(
-    (role) => role.name.toLowerCase() === roleName.toLowerCase()
+    (role) => role.name.toLowerCase() === search
   );
 }
 
-// =========================
+function getManageableRole(guild, role) {
+  const me = guild.members.me;
+
+  if (!me) {
+    throw new Error("I couldn't determine the bot's member information.");
+  }
+
+  if (role.id === guild.id) {
+    throw new Error("The @everyone role cannot be managed.");
+  }
+
+  if (role.managed) {
+    throw new Error("That role is managed by a Discord integration.");
+  }
+
+  if (role.position >= me.roles.highest.position) {
+    throw new Error(
+      "That role is at or above Bunnylaw bot's highest role."
+    );
+  }
+
+  return role;
+}
+
+// ============================================================
 // DISCORD COMMANDS
-// =========================
+// ============================================================
 
 discord.on("messageCreate", async (message) => {
   if (message.author.bot) return;
@@ -74,13 +106,11 @@ discord.on("messageCreate", async (message) => {
 
   const command = message.content.toLowerCase();
 
-  // Test
   if (command === "test") {
     await message.reply("Bunny law bot is working! 🐰");
     return;
   }
 
-  // List roles
   if (command === "!roles") {
     const roles = message.guild.roles.cache
       .filter((role) => role.name !== "@everyone")
@@ -95,7 +125,6 @@ discord.on("messageCreate", async (message) => {
     return;
   }
 
-  // Create role
   if (command.startsWith("!createrole ")) {
     const roleName = message.content.slice(12).trim();
 
@@ -112,17 +141,13 @@ discord.on("messageCreate", async (message) => {
 
       await message.reply(`✅ Created the role **${role.name}**.`);
     } catch (error) {
-      console.error("Role creation error:", error);
-
-      await message.reply(
-        "❌ I couldn't create that role. Make sure I have Manage Roles permission."
-      );
+      console.error(error);
+      await message.reply("❌ I couldn't create that role.");
     }
 
     return;
   }
 
-  // Add role
   if (command.startsWith("!addrole ")) {
     const member = message.mentions.members.first();
 
@@ -130,13 +155,10 @@ discord.on("messageCreate", async (message) => {
       .replace(/^!addrole\s+<@!?\d+>\s*/i, "")
       .trim();
 
-    if (!member) {
-      await message.reply("Please mention the member.");
-      return;
-    }
-
-    if (!roleName) {
-      await message.reply("Please provide the role name.");
+    if (!member || !roleName) {
+      await message.reply(
+        "Usage: `!addrole @member Role Name`"
+      );
       return;
     }
 
@@ -148,23 +170,20 @@ discord.on("messageCreate", async (message) => {
     }
 
     try {
+      getManageableRole(message.guild, role);
       await member.roles.add(role);
 
       await message.reply(
         `✅ Added **${role.name}** to **${member.user.username}**.`
       );
     } catch (error) {
-      console.error("Role assignment error:", error);
-
-      await message.reply(
-        "❌ I couldn't assign that role. Make sure Bunnylaw bot's role is above the role."
-      );
+      console.error(error);
+      await message.reply(`❌ ${error.message}`);
     }
 
     return;
   }
 
-  // Remove role
   if (command.startsWith("!removerole ")) {
     const member = message.mentions.members.first();
 
@@ -172,8 +191,10 @@ discord.on("messageCreate", async (message) => {
       .replace(/^!removerole\s+<@!?\d+>\s*/i, "")
       .trim();
 
-    if (!member) {
-      await message.reply("Please mention the member.");
+    if (!member || !roleName) {
+      await message.reply(
+        "Usage: `!removerole @member Role Name`"
+      );
       return;
     }
 
@@ -185,44 +206,49 @@ discord.on("messageCreate", async (message) => {
     }
 
     try {
+      getManageableRole(message.guild, role);
       await member.roles.remove(role);
 
       await message.reply(
         `✅ Removed **${role.name}** from **${member.user.username}**.`
       );
     } catch (error) {
-      console.error("Role removal error:", error);
-
-      await message.reply(
-        "❌ I couldn't remove that role."
-      );
+      console.error(error);
+      await message.reply(`❌ ${error.message}`);
     }
 
     return;
   }
 });
 
-// =========================
-// MCP SERVER
-// =========================
+// ============================================================
+// MCP SERVER FACTORY
+// ============================================================
 
-function createMcpServer() {
-  const mcp = new McpServer({
+function buildMcpServer() {
+  const server = new McpServer({
     name: "Bunnylaw",
     version: "1.0.0",
   });
 
+  // ----------------------------------------------------------
   // LIST ROLES
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "list_roles",
-    "List all roles in the Bunnylaw Discord server.",
-    {},
+    {
+      description:
+        "List all roles in the Bunnylaw Discord server.",
+      inputSchema: z.object({}),
+    },
     async () => {
       const guild = getGuild();
 
       const roles = guild.roles.cache
         .filter((role) => role.name !== "@everyone")
-        .map((role) => role.name);
+        .sort((a, b) => b.position - a.position)
+        .map((role) => `${role.name} — position ${role.position}`);
 
       return {
         content: [
@@ -237,12 +263,17 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // CREATE ROLE
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "create_role",
-    "Create a Discord role.",
     {
-      name: z.string().min(1),
+      description: "Create a new Discord role.",
+      inputSchema: z.object({
+        name: z.string().min(1),
+      }),
     },
     async ({ name }) => {
       const guild = getGuild();
@@ -268,7 +299,7 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't create that role.",
+              text: `❌ I couldn't create that role: ${error.message}`,
             },
           ],
         };
@@ -276,12 +307,17 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // DELETE ROLE
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "delete_role",
-    "Delete a Discord role.",
     {
-      role: z.string().min(1),
+      description: "Delete a Discord role.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+      }),
     },
     async ({ role }) => {
       const guild = getGuild();
@@ -292,31 +328,33 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: `❌ I couldn't find the role "${role}".`,
+              text: `❌ I couldn't find "${role}".`,
             },
           ],
         };
       }
 
       try {
-        await discordRole.delete("Deleted through Bunnylaw MCP");
+        getManageableRole(guild, discordRole);
+
+        await discordRole.delete(
+          "Deleted through Bunnylaw MCP"
+        );
 
         return {
           content: [
             {
               type: "text",
-              text: `✅ Deleted the role "${role}".`,
+              text: `✅ Deleted "${role}".`,
             },
           ],
         };
       } catch (error) {
-        console.error(error);
-
         return {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't delete that role.",
+              text: `❌ ${error.message}`,
             },
           ],
         };
@@ -324,13 +362,18 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // RENAME ROLE
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "rename_role",
-    "Rename a Discord role.",
     {
-      role: z.string().min(1),
-      new_name: z.string().min(1),
+      description: "Rename an existing Discord role.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        new_name: z.string().min(1),
+      }),
     },
     async ({ role, new_name }) => {
       const guild = getGuild();
@@ -341,13 +384,15 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: `❌ I couldn't find the role "${role}".`,
+              text: `❌ I couldn't find "${role}".`,
             },
           ],
         };
       }
 
       try {
+        getManageableRole(guild, discordRole);
+
         await discordRole.setName(
           new_name,
           "Renamed through Bunnylaw MCP"
@@ -362,13 +407,11 @@ function createMcpServer() {
           ],
         };
       } catch (error) {
-        console.error(error);
-
         return {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't rename that role.",
+              text: `❌ ${error.message}`,
             },
           ],
         };
@@ -376,13 +419,19 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // ADD ROLE
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "add_role",
-    "Give a Discord role to a member.",
     {
-      username: z.string().min(1),
-      role: z.string().min(1),
+      description:
+        "Give an existing Discord role to a server member.",
+      inputSchema: z.object({
+        username: z.string().min(1),
+        role: z.string().min(1),
+      }),
     },
     async ({ username, role }) => {
       const guild = getGuild();
@@ -407,14 +456,19 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: `❌ I couldn't find the role "${role}".`,
+              text: `❌ I couldn't find "${role}".`,
             },
           ],
         };
       }
 
       try {
-        await member.roles.add(discordRole);
+        getManageableRole(guild, discordRole);
+
+        await member.roles.add(
+          discordRole,
+          "Added through Bunnylaw MCP"
+        );
 
         return {
           content: [
@@ -425,13 +479,11 @@ function createMcpServer() {
           ],
         };
       } catch (error) {
-        console.error(error);
-
         return {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't assign that role. Check the bot's role hierarchy.",
+              text: `❌ ${error.message}`,
             },
           ],
         };
@@ -439,13 +491,19 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // REMOVE ROLE
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "remove_role",
-    "Remove a Discord role from a member.",
     {
-      username: z.string().min(1),
-      role: z.string().min(1),
+      description:
+        "Remove an existing Discord role from a server member.",
+      inputSchema: z.object({
+        username: z.string().min(1),
+        role: z.string().min(1),
+      }),
     },
     async ({ username, role }) => {
       const guild = getGuild();
@@ -470,14 +528,19 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: `❌ I couldn't find the role "${role}".`,
+              text: `❌ I couldn't find "${role}".`,
             },
           ],
         };
       }
 
       try {
-        await member.roles.remove(discordRole);
+        getManageableRole(guild, discordRole);
+
+        await member.roles.remove(
+          discordRole,
+          "Removed through Bunnylaw MCP"
+        );
 
         return {
           content: [
@@ -488,13 +551,11 @@ function createMcpServer() {
           ],
         };
       } catch (error) {
-        console.error(error);
-
         return {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't remove that role.",
+              text: `❌ ${error.message}`,
             },
           ],
         };
@@ -502,12 +563,18 @@ function createMcpServer() {
     }
   );
 
-  // LIST MEMBER ROLES
-  mcp.tool(
+  // ----------------------------------------------------------
+  // MEMBER ROLES
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "list_member_roles",
-    "List all roles assigned to a Discord member.",
     {
-      username: z.string().min(1),
+      description:
+        "List the roles currently assigned to a Discord member.",
+      inputSchema: z.object({
+        username: z.string().min(1),
+      }),
     },
     async ({ username }) => {
       const guild = getGuild();
@@ -526,6 +593,7 @@ function createMcpServer() {
 
       const roles = member.roles.cache
         .filter((role) => role.name !== "@everyone")
+        .sort((a, b) => b.position - a.position)
         .map((role) => role.name);
 
       return {
@@ -541,12 +609,18 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // FIND MEMBER
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "find_member",
-    "Find a Discord member by username or display name.",
     {
-      username: z.string().min(1),
+      description:
+        "Find a Discord server member by username or display name.",
+      inputSchema: z.object({
+        username: z.string().min(1),
+      }),
     },
     async ({ username }) => {
       const guild = getGuild();
@@ -567,20 +641,29 @@ function createMcpServer() {
         content: [
           {
             type: "text",
-            text: `Found member: ${member.user.username}\nDisplay name: ${member.displayName}\nUser ID: ${member.id}`,
+            text:
+              `Username: ${member.user.username}\n` +
+              `Display name: ${member.displayName}\n` +
+              `User ID: ${member.id}`,
           },
         ],
       };
     }
   );
 
-  // CHANGE ROLE COLOR
-  mcp.tool(
+  // ----------------------------------------------------------
+  // ROLE COLOR
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "set_role_color",
-    "Change the color of a Discord role.",
     {
-      role: z.string().min(1),
-      color: z.string().min(1),
+      description:
+        "Change the color of an existing Discord role.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        color: z.string().min(1),
+      }),
     },
     async ({ role, color }) => {
       const guild = getGuild();
@@ -591,13 +674,15 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: `❌ I couldn't find the role "${role}".`,
+              text: `❌ I couldn't find "${role}".`,
             },
           ],
         };
       }
 
       try {
+        getManageableRole(guild, discordRole);
+
         await discordRole.setColor(
           color,
           "Color changed through Bunnylaw MCP"
@@ -612,13 +697,11 @@ function createMcpServer() {
           ],
         };
       } catch (error) {
-        console.error(error);
-
         return {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't change that role's color.",
+              text: `❌ ${error.message}`,
             },
           ],
         };
@@ -626,13 +709,19 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // MOVE ROLE
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "move_role",
-    "Move a Discord role to a specified position.",
     {
-      role: z.string().min(1),
-      position: z.number().int().min(1),
+      description:
+        "Move a manageable Discord role to a different hierarchy position.",
+      inputSchema: z.object({
+        role: z.string().min(1),
+        position: z.number().int().min(1),
+      }),
     },
     async ({ role, position }) => {
       const guild = getGuild();
@@ -643,13 +732,15 @@ function createMcpServer() {
           content: [
             {
               type: "text",
-              text: `❌ I couldn't find the role "${role}".`,
+              text: `❌ I couldn't find "${role}".`,
             },
           ],
         };
       }
 
       try {
+        getManageableRole(guild, discordRole);
+
         await discordRole.setPosition(position);
 
         return {
@@ -661,13 +752,11 @@ function createMcpServer() {
           ],
         };
       } catch (error) {
-        console.error(error);
-
         return {
           content: [
             {
               type: "text",
-              text: "❌ I couldn't move that role.",
+              text: `❌ ${error.message}`,
             },
           ],
         };
@@ -675,11 +764,17 @@ function createMcpServer() {
     }
   );
 
+  // ----------------------------------------------------------
   // SERVER INFO
-  mcp.tool(
+  // ----------------------------------------------------------
+
+  server.registerTool(
     "server_info",
-    "Get information about the Bunnylaw Discord server.",
-    {},
+    {
+      description:
+        "Get basic information about the Bunnylaw Discord server.",
+      inputSchema: z.object({}),
+    },
     async () => {
       const guild = getGuild();
 
@@ -698,41 +793,30 @@ function createMcpServer() {
     }
   );
 
-  return mcp;
+  return server;
 }
 
-// =========================
-// MCP HTTP ENDPOINT
-// =========================
+// ============================================================
+// MCP HTTP SERVER
+// ============================================================
 
-app.post("/mcp", async (req, res) => {
-  try {
-    const mcp = createMcpServer();
+const mcpHandler = createMcpHandler(buildMcpServer);
 
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-      enableJsonResponse: true,
-    });
-
-    res.on("close", () => {
-      transport.close().catch(() => {});
-    });
-
-    await mcp.connect(transport);
-
-    await transport.handleRequest(req, res, req.body);
-  } catch (error) {
-    console.error("MCP error:", error);
-
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: "MCP request failed.",
-      });
-    }
-  }
+const app = createMcpExpressApp({
+  host: "0.0.0.0",
+  allowedHosts: ["bunnylaw-mcp.onrender.com"],
 });
 
-// Health check
+const nodeMcpHandler = toNodeHandler(mcpHandler);
+
+app.all("/mcp", (req, res) => {
+  void nodeMcpHandler(req, res, req.body);
+});
+
+// ============================================================
+// HEALTH CHECK
+// ============================================================
+
 app.get("/", (req, res) => {
   res.send("Bunnylaw MCP server is online!");
 });
@@ -744,8 +828,11 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
+// ============================================================
+// START
+// ============================================================
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`MCP endpoint: /mcp`);
+  console.log(`MCP endpoint: https://bunnylaw-mcp.onrender.com/mcp`);
 });
