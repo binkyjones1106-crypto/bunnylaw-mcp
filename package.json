@@ -1,15 +1,1 @@
-{
-  "name": "bunnylaw-mcp",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "start": "node src/index.js"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
-    "discord.js": "latest",
-    "dotenv": "latest",
-    "express": "latest",
-    "zod": "latest"
-  }
-}
+"@modelcontextprotocol/server": "latest",
