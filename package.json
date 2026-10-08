@@ -6,7 +6,9 @@
     "start": "node src/index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
+    "@modelcontextprotocol/server": "latest",
+    "@modelcontextprotocol/express": "latest",
+    "@modelcontextprotocol/node": "latest",
     "discord.js": "latest",
     "dotenv": "latest",
     "express": "latest",
