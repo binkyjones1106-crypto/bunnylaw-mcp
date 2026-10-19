@@ -30,7 +30,23 @@ discord.once("ready", () => {
   console.log(`Discord bot logged in as ${discord.user.tag}`);
 });
 
-discord.login(process.env.DISCORD_BOT_TOKEN);
+   console.log(
+     "Token set:",
+     Boolean(process.env.DISCORD_BOT_TOKEN),
+     "length:",
+     process.env.DISCORD_BOT_TOKEN?.length
+   );
+   discord.on("error", (e) => console.error("Discord client error:", e));
+   discord.on("shardError", (e) => console.error("Discord shard error:", e));
+   discord.on("warn", (m) => console.warn("Discord warn:", m));
+   discord.on("debug", (m) => console.log("[debug]", m));
+   process.on("unhandledRejection", (e) =>
+     console.error("Unhandled rejection:", e)
+   );
+
+   discord.login(process.env.DISCORD_BOT_TOKEN).catch((err) => {
+     console.error("Discord login failed:", err);
+   });
 
 // ============================================================
 // HELPERS
